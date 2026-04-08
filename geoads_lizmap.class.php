@@ -252,7 +252,7 @@ class geoads_lizmap extends geoads_base {
     return $centroid_result;
   }
 
-  public function recup_toutes_contraintes(){
+  public function recup_toutes_contraintes($code_insee){
     if (empty($this->code_insee)) {
         throw new geoads_parameter_exception("Code INSEE manquant");
     }
