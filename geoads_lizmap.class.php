@@ -2,6 +2,13 @@
 
 class geoads_lizmap extends geoads_base {
 
+  private $url_sig;
+  private $base_url;
+  private $lizmap_user;
+  private $lizmap_password;
+  private $code_insee_parcelle;
+  private $code_insee;
+
   public function init_message_sender() {
       // On n'utilise pas de "messageSender" ici, on fait du cURL direct.
       $this->messageSender = null;
@@ -87,7 +94,6 @@ class geoads_lizmap extends geoads_base {
       }
       return $decoded;
     } finally {
-      //Permet de s'assurer que la ressource cURL est libérée même en cas d'exception
       curl_close($ch);
     }
   }
@@ -96,7 +102,11 @@ class geoads_lizmap extends geoads_base {
     // openADS fournit prefixe/quartier/section/parcelle.    
     //normalisation des champs pour construire un ID de parcelle cohérent avec ce que Lizmap attend
     //normalisation du prefixe sur 3 caractères (normalement que 0)
-    $prefixe  = str_pad((string)($p['prefixe'] ?? ''), 3, '0', STR_PAD_LEFT);
+    $rawPrefixe = (string)($p['prefixe'] ?? '');
+    if ($rawPrefixe !== '' && !preg_match('/^\d{1,3}$/', $rawPrefixe)) {
+      throw new geoads_parameter_exception("Préfixe cadastral invalide : '$rawPrefixe'");
+    }
+    $prefixe  = str_pad($rawPrefixe, 3, '0', STR_PAD_LEFT);
 
     //normalisation de la session sur deux caractères 
     $section  = strtoupper((string)($p['section'] ?? ''));
@@ -105,10 +115,11 @@ class geoads_lizmap extends geoads_base {
     }
 
     //normalisation du numéro sur 4 caractères
-    $numero = str_pad(preg_replace('/\D/', '', (string)($p['parcelle'] ?? '')), 4, '0', STR_PAD_LEFT);
-    if ($numero === '' || !preg_match('/^\d{1,4}$/', $numero)) {
-      throw new geoads_parameter_exception("Numéro de parcelle invalide : '$numero'");
+    $rawNumero = preg_replace('/\D/', '', (string)($p['parcelle'] ?? ''));
+    if ($rawNumero === '' || strlen($rawNumero) > 4) {
+      throw new geoads_parameter_exception("Numéro de parcelle invalide : '" . ($p['parcelle'] ?? '') . "'");
     }
+    $numero = str_pad($rawNumero, 4, '0', STR_PAD_LEFT);
     return $this->code_insee_parcelle . $prefixe . $section . $numero;
   }
 
@@ -134,7 +145,7 @@ class geoads_lizmap extends geoads_base {
   }
 
   private function checkArgs(array $parcelles, string $dossier, bool $allowEmptyParcelle = false): void{
-    $dossierVide   = empty(trim($dossier));
+    $dossierVide   = (trim($dossier) === '');
     $parcellesVides = empty($parcelles);
 
     // Cas où les deux sont attendus (allowEmptyParcelle=false)
@@ -181,7 +192,7 @@ class geoads_lizmap extends geoads_base {
   }
 
   private function lizmap_url(array $params = array()): string {
-    $sep = (strpos($base, '?') === false) ? '?' : '&';
+    $sep = (strpos($this->url_sig, '?') === false) ? '?' : '&';
     return rtrim($this->url_sig, '&?') . $sep . http_build_query($params, '', '&', PHP_QUERY_RFC3986); 
   }
 
@@ -208,10 +219,16 @@ class geoads_lizmap extends geoads_base {
   public function redirection_web(?array $parcelles = null, $dossier = null) {
     //https://docs.lizmap.com/current/en/publish/configuration/permalink.html#zoom-on-an-object-when-opening-the-map
     //layer=parcelle&filter=%22geo_parcelle%22%20%3D%20%27340172000BX0079%27popup=true
-    $filterExpr = '"numero"=\'' . str_replace("'", "''", (string)$dossier) . '\'';
+
+    $dossierStr = (string)$dossier;
+    if ($dossierStr !== '' && !preg_match('/^[A-Za-z0-9\-\/_.]+$/', $dossierStr)) {
+      throw new geoads_parameter_exception("Identifiant de dossier invalide : caractères non autorisés.");
+    }
+    
+    $filterExpr = '"numero"=\'' . str_replace("'", "''", $dossierStr) . '\'';
     $params = array(
       'openads_action'  => 'redirection_web',
-      'dossier' => $dossier,
+      'dossier' => $dossierStr,
       'filter'  => $filterExpr,
       'layer' => 'dossiers_openads',
       'popup' => 'true',
